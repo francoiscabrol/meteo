@@ -28,7 +28,7 @@ function convertTime(unix) {
 program
   .version(require('../package.json').version)
   .option('-l, --location <location>', 'weather location')
-  .option('-w, --week <week>', 'temperature for all the next week')
+  .option('-w, --week', 'temperature for all the next week')
   .option('-u, --unit <unit>', 'temperature unit');
   program.parse(process.argv);
 
@@ -37,18 +37,10 @@ program
 
 conf.city = program.location || conf.city;
 conf.unit = program.unit || conf.unit;
+conf.week = program.week || false;
 
 
 // instantiate
-
-var table = new Table({
-    head: [
-    'City',
-    'Temp ' + (conf.unit === 'c' ? '°C' : '°F').grey,
-    'Wind ' + 'km/h'.grey,
-    'Humidity ' + '%'.grey]
-  , colWidths: [16, 11, 11, 20]
-});
 
 
 //update conf
@@ -59,23 +51,60 @@ write(resolve(__dirname, '../etc/conf.json'), JSON.stringify(conf), function (er
 
 
 //request weather
+if (!conf.week) {
+    var table = new Table({
+        head: [
+        'City',
+        'Temp ' + (conf.unit === 'c' ? '°C' : '°F').grey,
+        'Wind ' + 'km/h'.grey,
+        'Humidity ' + '%'.grey]
+      , colWidths: [16, 11, 11, 20]
+    });
+    request.get('http://api.openweathermap.org/data/2.5/weather?q=' + conf.city + '&units=metric&mode=json', function(res){
+        var weather = JSON.parse(res.text),
+                temp = weather.main.temp;
 
-request.get('http://api.openweathermap.org/data/2.5/weather?q=' + conf.city + '&units=metric&mode=json', function(res){
-	var weather = JSON.parse(res.text),
-			temp = weather.main.temp;
+        if(conf.unit === 'f') temp = temp * 1.8 + 32;
 
-	if(conf.unit === 'f') temp = temp * 1.8 + 32;
+        //weather widget
+        table.push([weather.name, (' ' + String(temp).substring(0,4) + ' ').bold.inverse, weather.wind.speed, weather.main.humidity]);
+        console.log('\n' + table.toString() + '\n');
 
-	//weather widget
-	table.push([weather.name, (' ' + String(temp).substring(0,4) + ' ').bold.inverse, weather.wind.speed, weather.main.humidity]);
-	console.log('\n' + table.toString() + '\n');
+        //weather details
+        console.log('TODAY', weather.weather[0].description.grey, '\n');
+        console.log('   low '.grey,
+            weather.main.temp_min + '°',
+            '   high '.grey,weather.main.temp_max + '°',
+            '   sunrise '.grey,convertTime(weather.sys.sunrise) + ' AM',
+            '   sunset '.grey,convertTime(weather.sys.sunset) + ' PM\n');
 
-	//weather details
-	console.log('TODAY', weather.weather[0].description.grey, '\n');
-	console.log('   low '.grey,
-		weather.main.temp_min + '°',
-		'   high '.grey,weather.main.temp_max + '°',
-		'   sunrise '.grey,convertTime(weather.sys.sunrise) + ' AM',
-		'   sunset '.grey,convertTime(weather.sys.sunset) + ' PM\n');
+    });
+} else {
+    request.get('http://api.openweathermap.org/data/2.5/forecast?q=' + conf.city + '&units=metric&mode=json', function(res){
+        var weathers = JSON.parse(res.text);
+        var table = new Table({
+            head: [
+            'City',
+            'Temp ' + (conf.unit === 'c' ? '°C' : '°F').grey,
+            'Wind ' + 'km/h'.grey,
+            'Humidity ' + '%'.grey]
+          , colWidths: [16, 11, 11, 20]
+        });
 
-});
+        for (var index in weathers.list) {
+            var weather = weathers.list[index];
+            var temp = weather.main.temp;
+
+            if(conf.unit === 'f') temp = temp * 1.8 + 32;
+
+            var date = new Date(weather.dt_txt);
+            var hours = date.getHours();
+            if ((date.getHours() > 7 && date.getHours() < 12) || (hours > 14 && hours < 17)) {
+                // name : weathers.city.name
+                //weather widget
+                table.push([date.getDate() + "/" + date.getMonth() + "|"+date.getHours()+"h", (' ' + String(temp).substring(0,4) + ' ').bold.inverse, weather.wind.speed, weather.main.humidity]);
+            }
+        }
+        console.log('\n' + table.toString() + '\n');
+    });
+}

@@ -23,9 +23,9 @@
     "url": "https://github.com/bredele/meteo/issues"
   },
   "dependencies": {
-    "superagent": "~0.16.0",
-    "commander": "~2.1.0",
+    "cli-table": "~0.3.0",
     "colors": "~0.6.2",
-    "cli-table": "~0.3.0"
+    "commander": "~2.1.0",
+    "lodash": "^3.8.0"
   }
 }

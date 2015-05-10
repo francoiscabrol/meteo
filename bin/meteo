@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
-var request = require('superagent'),
+var http = require('http'),
 		program = require('commander'),
 		write = require('fs').writeFile,
 		resolve = require('path').resolve,
 		conf = require('../etc/conf.json'),
 		Table = require('cli-table'),
-		colors = require('colors');
-
+		colors = require('colors'),
+        _ = require("lodash");
 
 /**
  * Covert unix time to JavaScript
@@ -21,90 +21,143 @@ function convertTime(unix) {
 }
 
 
-/**
- * Usage.
- */
-
+// Set program's options
 program
   .version(require('../package.json').version)
   .option('-l, --location <location>', 'weather location')
   .option('-w, --week', 'temperature for all the next week')
-  .option('-u, --unit <unit>', 'temperature unit');
-  program.parse(process.argv);
+  .option('-u, --unit <unit>', 'temperature unit')
+  .option('-s, --save', 'save the options');
+program.parse(process.argv);
 
 
-//settings
-
+// Set settings
 conf.city = program.location || conf.city;
 conf.unit = program.unit || conf.unit;
 conf.week = program.week || false;
+conf.save = program.save || false;
 
+// Update conf
+if (conf.save) {
+    write(resolve(__dirname, '../etc/conf.json'), JSON.stringify(conf), function (err) {
+        if (err) console.log('execute the command with sudo to save your options\n\n'.yellow);
+    });
+}
 
-// instantiate
+// Define information type
+var type = (function () {
+    var type = "current";
+    
+    if (conf.week) {
+        type = "week";        
+    }
+    
+    return type;
+})();
 
+// Set http request options
+var options = (function () {
+    var options = {
+        host: 'api.openweathermap.org',
+            port: 80
+    };
+    switch (type) {
+        case "current" : options.path = '/data/2.5/weather?q=' + conf.city + '&units=metric&mode=json'; break;
+        case "week":     options.path = '/data/2.5/forecast?q=' + conf.city + '&units=metric&mode=json'; break;
+    }
+    return options;
+})();
 
-//update conf
+// Send http request
+http.get(options, function(response){
+    var data = "";
+    response.setEncoding('utf8');
 
-write(resolve(__dirname, '../etc/conf.json'), JSON.stringify(conf), function (err) {
-  if (err) console.log('execute the command with sudo to save your options\n\n'.yellow);
+    response.on('data', function (chunk) {
+        data += chunk;
+    });
+
+    response.on('end', function(){
+        switch (type) {
+            case "current" : displayCurrentWeather(data); break;
+            case "week":     displayWeeklyWeather(data); break;
+        }
+
+    });
+}).on("error", function (e) {
+    console.log("Got error: " + e.message);
 });
 
-
-//request weather
-if (!conf.week) {
+function displayCurrentWeather(res) {
+    var weather = JSON.parse(res),
+        temp = weather.main.temp;
+    
     var table = new Table({
         head: [
-        'City',
-        'Temp ' + (conf.unit === 'c' ? '°C' : '°F').grey,
-        'Wind ' + 'km/h'.grey,
-        'Humidity ' + '%'.grey]
-      , colWidths: [16, 11, 11, 20]
-    });
-    request.get('http://api.openweathermap.org/data/2.5/weather?q=' + conf.city + '&units=metric&mode=json', function(res){
-        var weather = JSON.parse(res.text),
-                temp = weather.main.temp;
-
-        if(conf.unit === 'f') temp = temp * 1.8 + 32;
-
-        //weather widget
-        table.push([weather.name, (' ' + String(temp).substring(0,4) + ' ').bold.inverse, weather.wind.speed, weather.main.humidity]);
-        console.log('\n' + table.toString() + '\n');
-
-        //weather details
-        console.log('TODAY', weather.weather[0].description.grey, '\n');
-        console.log('   low '.grey,
-            weather.main.temp_min + '°',
-            '   high '.grey,weather.main.temp_max + '°',
-            '   sunrise '.grey,convertTime(weather.sys.sunrise) + ' AM',
-            '   sunset '.grey,convertTime(weather.sys.sunset) + ' PM\n');
-
-    });
-} else {
-    request.get('http://api.openweathermap.org/data/2.5/forecast?q=' + conf.city + '&units=metric&mode=json', function(res){
-        var weathers = JSON.parse(res.text);
-        var table = new Table({
-            head: [
-            'City',
+            'Date',
             'Temp ' + (conf.unit === 'c' ? '°C' : '°F').grey,
             'Wind ' + 'km/h'.grey,
             'Humidity ' + '%'.grey]
-          , colWidths: [16, 11, 11, 20]
-        });
-
-        for (var index in weathers.list) {
-            var weather = weathers.list[index];
-            var temp = weather.main.temp;
-
-            if(conf.unit === 'f') temp = temp * 1.8 + 32;
-
-            var date = new Date(weather.dt_txt);
-            var hours = date.getHours();
-            if ((date.getHours() > 7 && date.getHours() < 12) || (hours > 14 && hours < 17)) {
-                // name : weathers.city.name
-                //weather widget
-                table.push([date.getDate() + "/" + date.getMonth() + "|"+date.getHours()+"h", (' ' + String(temp).substring(0,4) + ' ').bold.inverse, weather.wind.speed, weather.main.humidity]);
-            }
-        }
-        console.log('\n' + table.toString() + '\n');
+        , colWidths: [16, 11, 11, 20]
     });
+
+    if(conf.unit === 'f') temp = temp * 1.8 + 32;
+
+    //weather widget
+    table.push([weather.name, (' ' + String(temp).substring(0,4) + ' ').bold.inverse, weather.wind.speed, weather.main.humidity]);
+    console.log('\n' + table.toString() + '\n');
+
+    //weather details
+    console.log('TODAY', weather.weather[0].description.grey, '\n');
+    console.log('   low '.grey,
+        weather.main.temp_min + '°',
+        '   high '.grey,weather.main.temp_max + '°',
+        '   sunrise '.grey, convertTime(weather.sys.sunrise) + ' AM',
+        '   sunset '.grey, convertTime(weather.sys.sunset) + ' PM\n');
+}
+
+function displayWeeklyWeather(res) {
+    var weathers = JSON.parse(res);
+
+    var table = new Table({
+        head: [
+            'Date',
+            'Hours',
+            'Temp ' + (conf.unit === 'c' ? '°C' : '°F').grey,
+            'Hours',
+            'Temp ' + (conf.unit === 'c' ? '°C' : '°F').grey]
+        , colWidths: [11, 11, 11, 11, 11]
+    });
+    
+    var points = [];
+
+    for (var index in weathers.list) {
+        var weather = weathers.list[index];
+        var temp = weather.main.temp;
+    
+        if(conf.unit === 'f') temp = temp * 1.8 + 32;
+
+        var date = new Date(weather.dt_txt);
+        var hours = date.getHours();
+        if ((date.getHours() > 7 && date.getHours() < 12) || (hours > 14 && hours < 17)) {
+            points.push({
+                date: date.getDate() + "/" + date.getMonth(),
+                hours: date.getHours()+"h",
+                temp: (' ' + String(temp).substring(0,4) + ' ').bold.inverse                         
+            });
+        }
+    }
+
+    var pointsByDate = _.groupBy(points, "date");
+    
+    _.forEach(pointsByDate, function (points, date) {
+        var tableContent = [date];
+        _.forEach(points, function (point) {
+            tableContent.push(point.hours, point.temp);
+        });
+        table.push(tableContent);
+    });
+    
+    console.log('City', weathers.city.name.grey, '\n');
+    console.log('\n' + table.toString() + '\n');
 }
